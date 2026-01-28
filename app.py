@@ -1,161 +1,101 @@
 import streamlit as st
 from supabase import create_client
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 from groq import Groq
+import re
 
-# --- 1. CONFIG ---
+# --- 1. CONFIG & CSS RESET ---
 st.set_page_config(page_title="VANTAGE PROTOCOL", layout="wide", initial_sidebar_state="collapsed")
 
-# --- UI OVERHAUL (CSS) ---
 st.markdown("""
 <style>
-    /* MAIN BACKGROUND */
-    .stApp {
-        background-color: #090b10;
-        color: #b0b3b8;
-        font-family: 'Inter', sans-serif;
-    }
-
-    /* REMOVE DEFAULT PADDING */
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-
-    /* CUSTOM CONTAINERS */
-    .dashboard-container {
-        background-color: #0e1116; 
-        border: 1px solid #1e2128;
+    /* 1. RESET STREAMLIT DEFAULTS */
+    .stApp { background-color: #050505; color: #e0e0e0; font-family: 'Inter', sans-serif; }
+    .block-container { padding-top: 1rem !important; padding-bottom: 2rem !important; max-width: 95% !important; }
+    header, footer { display: none !important; }
+    
+    /* 2. THE CARD SYSTEM (Glassmorphism) */
+    .dashboard-card {
+        background-color: #0b0c10;
+        border: 1px solid #1f2329;
         border-radius: 12px;
         padding: 20px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    }
-
-    /* HEADERS */
-    h1, h2, h3, h4 {
-        color: #e4e6eb !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.5px;
-    }
-
-    /* CHART CONTAINER */
-    .chart-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100%;
+        height: 450px; /* Fixed height for alignment */
+        overflow-y: auto;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
         position: relative;
     }
 
-    /* LIST / PROBLEMS STYLING */
-    .problem-header {
-        color: #e4e6eb;
-        font-size: 1.1rem;
-        margin-bottom: 15px;
-        border-bottom: 1px solid #2a2e35;
-        padding-bottom: 10px;
-    }
-
-    .problem-row {
+    /* 3. TYPOGRAPHY */
+    h3 { font-size: 14px !important; color: #888 !important; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px !important; font-weight: 600 !important; }
+    
+    /* 4. CUSTOM LIST STYLING */
+    .problem-item {
         display: flex;
         flex-direction: column;
-        padding: 12px 0;
-        border-bottom: 1px solid #1e2128;
-        cursor: pointer;
-        transition: all 0.2s;
+        padding: 12px 10px;
+        border-bottom: 1px solid #1a1d24;
+        transition: background 0.2s;
+        cursor: default;
     }
-    .problem-row:hover {
-        background-color: #13161c;
-    }
-
-    .row-top {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        width: 100%;
-    }
-
-    .row-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .icon-box {
-        color: #ff4b4b; /* Red Warning Color */
-        font-size: 1.2rem;
-    }
-
-    .problem-title {
-        color: #d1d5db;
-        font-size: 0.95rem;
-    }
+    .problem-item:hover { background-color: #11141a; }
     
-    .problem-meta {
-        color: #6b7280;
-        font-size: 0.8rem;
-        margin-top: 4px;
-        padding-left: 28px; /* Align with text */
-    }
-
-    .chevron {
-        color: #4b5563;
-        transform: rotate(-90deg);
-        font-size: 0.8rem;
-    }
-
-    /* PROGRESS BARS UNDER ITEMS (Visual Flair from Image) */
-    .mini-progress-bg {
+    .problem-header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+    
+    .problem-left { display: flex; align-items: center; gap: 12px; }
+    .status-icon { color: #ff3333; font-size: 14px; }
+    .problem-name { color: #ccc; font-size: 14px; font-weight: 500; }
+    
+    .problem-meta { font-size: 11px; color: #555; margin-left: 26px; margin-top: 4px; }
+    
+    /* GLOWING LINE ANIMATION */
+    .glow-line-container {
         height: 2px;
+        background: #15181e;
         width: 100%;
-        background-color: #1f2937;
-        margin-top: 8px;
+        margin-top: 10px;
         border-radius: 2px;
-        margin-left: 28px; /* Align with text */
-        width: calc(100% - 28px);
         position: relative;
     }
-    
-    .mini-progress-fill {
+    .glow-line-fill {
         height: 100%;
-        background: linear-gradient(90deg, #ff4b4b, transparent);
-        border-radius: 2px;
-        box-shadow: 0 0 8px rgba(255, 75, 75, 0.4);
+        background: linear-gradient(90deg, #ff3333, transparent);
+        box-shadow: 0 0 10px rgba(255, 51, 51, 0.3);
     }
 
-    /* BUTTON STYLING */
+    /* 5. BUTTON OVERRIDE */
     div.stButton > button {
-        background-color: #1f2937;
-        color: #e5e7eb;
-        border: 1px solid #374151;
-        border-radius: 6px;
-        padding: 10px 20px;
-        font-size: 0.9rem;
-        transition: all 0.2s;
+        background: linear-gradient(180deg, #1f2329 0%, #0b0c10 100%);
+        border: 1px solid #333;
+        color: #888;
         width: 100%;
+        padding: 12px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        transition: all 0.2s;
     }
     div.stButton > button:hover {
-        background-color: #374151;
-        border-color: #4b5563;
-        color: white;
+        border-color: #00D4FF;
+        color: #00D4FF;
+        box-shadow: 0 0 15px rgba(0, 212, 255, 0.1);
     }
-    
-    /* DATAFRAME DARK MODE */
-    [data-testid="stDataFrame"] {
-        background-color: #0e1116;
-    }
+
+    /* SCROLLBAR */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0b0c10; }
+    ::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONNECTIONS ---
+# --- 2. LOGIC & DATA ---
 try:
     supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     try: groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     except: groq_client = None
 except:
-    st.error("🔒 SYSTEM LOCK: Credentials Missing in Secrets.")
+    st.error("SYSTEM ERROR: Secrets missing.")
     st.stop()
 
 @st.cache_data(ttl=15)
@@ -163,46 +103,34 @@ def load_data():
     try:
         r = supabase.table("audit_ledger").select("*").execute()
         return pd.DataFrame(r.data)
-    except Exception as e:
-        # Return empty DF on error for UI stability
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 df = load_data()
 
-# --- 3. AGENT 3 (LOGIC UNCHANGED) ---
+def clean_ai_response(raw_list):
+    """Removes 'Output:', '**Title**' and other noise from AI"""
+    clean_list = []
+    for item in raw_list:
+        # Remove "Output:", "Here is...", etc.
+        if "output" in item.lower() or "template" in item.lower(): continue
+        # Remove bold markdown **
+        item = item.replace("**", "").replace("::", "-")
+        clean_list.append(item)
+    return clean_list
+
 def execute_agent_3(full_df):
-    if not groq_client: return ["// ERROR: GROQ CLIENT NOT INITIALIZED"]
+    if not groq_client: return ["System Offline"]
     
-    # 1. AGGREGATE
     stats = full_df.groupby('vendor_name').agg(
-        total_spend=('total_amount', 'sum'),
-        txn_count=('invoice_id', 'count')
-    ).reset_index()
+        total=('total_amount', 'sum'), count=('invoice_id', 'count')
+    ).reset_index().sort_values('total', ascending=False).head(20)
 
-    # 2. FILTER (Top 25)
-    targets = stats.sort_values(['total_spend', 'txn_count'], ascending=False).head(25)
-    
-    # 3. PREP EVIDENCE
-    evidence_lines = []
-    for _, row in targets.iterrows():
-        avg_ticket = row['total_spend'] / row['txn_count'] if row['txn_count'] > 0 else 0
-        evidence_lines.append(
-            f"VENDOR: {row['vendor_name']} | TOTAL: ${row['total_spend']:,.0f} | COUNT: {row['txn_count']} | AVG: ${avg_ticket:,.0f}"
-        )
+    evidence = [f"{r['vendor_name']}: ${r['total']:,.0f} ({r['count']} txns)" for _, r in stats.iterrows()]
 
-    # 4. JSON PROMPT
     prompt = f"""
-    {{
-      "role": "Advanced Forensic Anomaly Hunter",
-      "core_mission": "Analyze aggregated vendor data to detect known exploitable patterns.",
-      "input_context": {{ "data": {evidence_lines} }},
-      "analysis_framework": [
-        {{ "vector": "STRUCTURING", "logic": "High count with Avg Ticket just below limits." }},
-        {{ "vector": "VELOCITY", "logic": "High transaction count relative to spend." }}
-      ],
-      "output_format_strict": "Return a raw list of strings following this template:",
-      "output_template": "[VENDOR] :: [PATTERN NAME] (Confidence: X%)"
-    }}
+    Analyze these vendors for risk. Return ONLY a list of 5 suspicious vendors.
+    Format strictly: [VENDOR NAME] - [RISK TYPE] (Conf: X%)
+    Data: {evidence}
     """
     
     try:
@@ -211,152 +139,119 @@ def execute_agent_3(full_df):
             model="llama-3.3-70b-versatile",
             temperature=0.1
         )
-        content = res.choices[0].message.content
-        return content.split('\n')
-    except Exception as e:
-        return [f"// API ERROR: {str(e)}"]
+        return clean_ai_response(res.choices[0].message.content.split('\n'))
+    except: return ["API Error"]
 
-# --- 4. RENDER UI ---
+# --- 3. UI LAYOUT ---
 
 if not df.empty:
-    # Cleanup Data
     df['total_amount'] = pd.to_numeric(df['total_amount'], errors='coerce').fillna(0)
-    df['risk_score'] = pd.to_numeric(df['risk_score'], errors='coerce').fillna(0)
-
-    # Layout: 2 Columns like the image
-    c1, c2 = st.columns([1, 1]) # Split 50/50
     
-    # --- LEFT: THE CHART ---
+    # CONTAINER 1: TOP ROW (Split 50/50)
+    c1, c2 = st.columns([1, 1], gap="medium")
+
+    # --- LEFT PANEL: DONUT CHART ---
     with c1:
-        st.markdown('<div class="dashboard-container">', unsafe_allow_html=True)
+        st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
+        st.markdown('<h3>Asset Distribution</h3>', unsafe_allow_html=True)
         
-        # Prepare Data for Donut
-        pie_data = df.groupby('vendor_name')['total_amount'].sum().reset_index().sort_values('total_amount', ascending=False)
+        # Data Prep
+        chart_data = df.groupby('vendor_name')['total_amount'].sum().reset_index().sort_values('total_amount', ascending=False)
+        if len(chart_data) > 5:
+            top = chart_data.head(4)
+            other = pd.DataFrame([{'vendor_name': 'Other', 'total_amount': chart_data.iloc[4:]['total_amount'].sum()}])
+            chart_data = pd.concat([top, other])
+
+        # Exact Colors from Image
+        colors = ['#3b4252', '#4c566a', '#bf616a', '#a3be8c', '#d08770'] 
         
-        # Limit to top 4 for the clean look, group others
-        if len(pie_data) > 4:
-            top_4 = pie_data.head(4)
-            others = pd.DataFrame([{'vendor_name': 'Others', 'total_amount': pie_data.iloc[4:]['total_amount'].sum()}])
-            pie_data = pd.concat([top_4, others])
-
-        # Custom Color Palette from Image (Muted Red, Blue, Green, Grey)
-        custom_colors = ['#8c3b3b', '#2c3e50', '#3b5c45', '#4a4a4a', '#2a2a2a']
-
         fig = go.Figure(data=[go.Pie(
-            labels=pie_data['vendor_name'],
-            values=pie_data['total_amount'],
-            hole=0.65, # Large hole like image
-            marker=dict(colors=custom_colors, line=dict(color='#090b10', width=2)),
-            textinfo='none', # Clean look
-            hoverinfo='label+percent+value'
+            labels=chart_data['vendor_name'], 
+            values=chart_data['total_amount'],
+            hole=0.75, # Thin Ring
+            marker=dict(colors=colors, line=dict(color='#0b0c10', width=4)),
+            textinfo='none',
+            hoverinfo='label+value'
         )])
-
-        total_val = df['total_amount'].sum()
         
         fig.update_layout(
             showlegend=False,
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(t=20, b=20, l=20, r=20),
-            height=350,
-            annotations=[
-                dict(text=f'78%<br><span style="font-size:12px; color:#666">Completion</span>', 
-                     x=0.5, y=0.5, font_size=20, showarrow=False, font_color='white')
-            ]
+            margin=dict(t=0, b=0, l=0, r=0),
+            height=320,
+            annotations=[dict(text='78%<br><span style="font-size:12px;color:#555">Coverage</span>', x=0.5, y=0.5, font_size=24, showarrow=False, font_color='#eee')]
         )
-        
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- RIGHT: THE LIST ("Current Problems") ---
+    # --- RIGHT PANEL: PROBLEMS LIST (HTML GENERATED) ---
     with c2:
-        st.markdown('<div class="dashboard-container" style="min-height: 390px;">', unsafe_allow_html=True)
-        st.markdown('<div class="problem-header">Current Problems</div>', unsafe_allow_html=True)
+        st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
         
-        # Button to trigger logic
-        if st.button("SCAN FOR ANOMALIES"):
-            with st.spinner("Analyzing..."):
-                findings = execute_agent_3(df)
-                st.session_state['scan_results'] = findings
+        # Header + Button in same block
+        col_head, col_btn = st.columns([2, 1])
+        with col_head: st.markdown('<h3>Current Problems</h3>', unsafe_allow_html=True)
+        with col_btn: 
+            if st.button("SCAN SYSTEM"):
+                with st.spinner("..."):
+                    st.session_state['scan'] = execute_agent_3(df)
         
-        # Display Results in the custom UI list style
-        results = st.session_state.get('scan_results', [])
-        
-        if not results:
-             # Default state (matches image look before scan)
-            defaults = [
-                "Touty Frotred Problem", 
-                "Loury Frotred Problems", 
-                "Tour metured Problems", 
-                "Toury Seered Pratit"
+        # List Logic
+        items = st.session_state.get('scan', [])
+        if not items:
+            items = [
+                "Touty Frotred Problem - STRUCTURING (Conf: 85%)", 
+                "Loury Frotred Problems - VELOCITY (Conf: 60%)",
+                "Tour metured Problems - ANOMALY (Conf: 45%)",
+                "Toury Seered Pratit - UNKNOWN (Conf: 90%)"
             ]
+        
+        # Generate HTML List
+        html_list = ""
+        for i, item in enumerate(items):
+            if not item.strip(): continue
+            parts = item.split("-")
+            title = parts[0]
+            meta = parts[1] if len(parts) > 1 else "Detecting..."
+            width = 90 - (i * 15) # Visual variance
             
-            for i, item in enumerate(defaults):
-                # Fake progress width for visual
-                width = 80 - (i * 15)
-                st.markdown(f"""
-                <div class="problem-row">
-                    <div class="row-top">
-                        <div class="row-left">
-                            <div class="icon-box">⚠️</div>
-                            <div class="problem-title">{item}</div>
-                        </div>
-                        <div class="chevron">▼</div>
+            html_list += f"""
+            <div class="problem-item">
+                <div class="problem-header">
+                    <div class="problem-left">
+                        <span class="status-icon">⚠️</span>
+                        <span class="problem-name">{title}</span>
                     </div>
-                    <!-- Glowing line logic -->
-                    <div class="mini-progress-bg">
-                        <div class="mini-progress-fill" style="width: {width}%;"></div>
-                    </div>
+                    <span style="color:#444; font-size:10px">▼</span>
                 </div>
-                """, unsafe_allow_html=True)
-
-        else:
-            # Render Actual Agent Results
-            for i, find in enumerate(results):
-                if "::" in find:
-                    parts = find.split('::')
-                    title = parts[0]
-                    desc = parts[1] if len(parts) > 1 else ""
-                    
-                    # Random visual width for the glow line based on string length
-                    width = min(100, len(desc) * 1.5)
-                    
-                    st.markdown(f"""
-                    <div class="problem-row">
-                        <div class="row-top">
-                            <div class="row-left">
-                                <div class="icon-box">⚠️</div>
-                                <div>
-                                    <div class="problem-title">{title}</div>
-                                </div>
-                            </div>
-                            <div class="chevron">▼</div>
-                        </div>
-                         <div class="problem-meta">{desc}</div>
-                        <div class="mini-progress-bg">
-                            <div class="mini-progress-fill" style="width: {width}%;"></div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                elif "ERROR" in find:
-                    st.error(find)
-
+                <div class="problem-meta">{meta}</div>
+                <div class="glow-line-container">
+                    <div class="glow-line-fill" style="width: {width}%"></div>
+                </div>
+            </div>
+            """
+        
+        st.markdown(html_list, unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     # --- BOTTOM: DATA TABLE ---
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown('<div class="problem-header">Global Evidence Ledger</div>', unsafe_allow_html=True)
+    st.markdown('<h3>Global Evidence Ledger</h3>', unsafe_allow_html=True)
     
-    cols = ['invoice_id', 'invoice_date', 'description', 'vendor_name', 'total_amount', 'risk_score']
+    cols = ['invoice_id', 'vendor_name', 'total_amount', 'risk_score', 'description']
+    # Ensure risk_score exists
+    if 'risk_score' not in df.columns: df['risk_score'] = 0
+    
     st.dataframe(
         df[cols].sort_values('risk_score', ascending=False),
         use_container_width=True,
         column_config={
-            "risk_score": st.column_config.ProgressColumn("Risk", min_value=0, max_value=100, format="%.0f"),
+            "risk_score": st.column_config.ProgressColumn("Risk", min_value=0, max_value=100, format="%d%%"),
             "total_amount": st.column_config.NumberColumn("Amount", format="$%.2f")
         },
         hide_index=True
     )
 
 else:
-    st.markdown("### SYSTEM CONNECTING...")
+    st.info("System initializing... Waiting for database connection.")
